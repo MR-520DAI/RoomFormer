@@ -4,3 +4,4 @@ checkpoints/*
 models/ops/build/temp.linux-x86_64-cpython-38/home/dzy/py_project/CAD/RoomFormer/models/ops/src/vision.o
 models/ops/build/temp.linux-x86_64-cpython-38/home/dzy/py_project/CAD/RoomFormer/models/ops/src/cpu/ms_deform_attn_cpu.o
 models/ops/build/temp.linux-x86_64-cpython-38/home/dzy/py_project/CAD/RoomFormer/models/ops/src/cuda/ms_deform_attn_cuda.o
+.vscode/settings.json

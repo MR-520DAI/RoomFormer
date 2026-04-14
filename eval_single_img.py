@@ -377,26 +377,41 @@ def _compute_door_arc(line, room_polygons, wall_thickness):
 
 def _build_wall_contours_from_rooms(room_polygons, wall_thickness, canvas_size=256, render_scale=4):
     """
-    用纯几何方式生成统一墙厚的双线轮廓。
+    基于房间内部区域生成统一墙厚的双线轮廓。
 
-    逻辑：
-    1. 对每个房间边界做等厚 buffer，得到墙带
-    2. 对整体墙带做一次小尺度几何闭合，补齐微小缝隙
-    3. 直接从几何体提取外轮廓/内轮廓，避免栅格化带来的厚度漂移
+    思路：
+    1. 房间 polygon 向外偏移 half_wall，得到外侧墙边界
+    2. 房间 polygon 向内偏移 half_wall，得到收缩后的室内区域
+    3. 两者做差，得到真正的墙体区域
+
+    这样提取出来的就是“有厚度的墙体”，导出 DXF 时天然是双线轮廓框。
     """
-    half_wall = max(wall_thickness / 2.0, 0.5)
     contour_groups = []
     if not room_polygons:
         return contour_groups
 
-    wall_geometries = [
-        room_polygon.boundary.buffer(half_wall, join_style=2, cap_style=2)
-        for room_polygon in room_polygons
-    ]
-    wall_union = unary_union(wall_geometries)
+    half_wall = max(wall_thickness / 2.0, 0.5)
+    outer_geometries = []
+    inner_geometries = []
 
-    # 用几何闭合补齐很小的断缝，同时尽量保持原始墙厚。
-    close_eps = max(0.75, wall_thickness * 0.2)
+    for room_polygon in room_polygons:
+        outer_polygon = room_polygon.buffer(half_wall, join_style=2, cap_style=2)
+        if not outer_polygon.is_empty and outer_polygon.area > 0:
+            outer_geometries.append(outer_polygon)
+
+        inner_polygon = room_polygon.buffer(-half_wall, join_style=2, cap_style=2)
+        if not inner_polygon.is_empty and inner_polygon.area > 0:
+            inner_geometries.append(inner_polygon)
+
+    if not outer_geometries:
+        return contour_groups
+
+    outer_union = unary_union(outer_geometries)
+    inner_union = unary_union(inner_geometries) if inner_geometries else None
+    wall_union = outer_union if inner_union is None else outer_union.difference(inner_union)
+
+    # 做一次很轻的闭合，补齐数值误差导致的小裂缝。
+    close_eps = max(0.25, wall_thickness * 0.08)
     wall_union = wall_union.buffer(close_eps, join_style=2).buffer(-close_eps, join_style=2)
 
     for wall_polygon in _iter_polygon_geometries(wall_union):
@@ -410,10 +425,7 @@ def _build_wall_contours_from_rooms(room_polygons, wall_thickness, canvas_size=2
             if len(hole) >= 4:
                 holes.append(hole)
 
-        contour_groups.append({
-            "shell": shell,
-            "holes": holes,
-        })
+        contour_groups.append({"shell": shell, "holes": holes})
 
     return contour_groups
 
@@ -594,6 +606,10 @@ def process_floorplan_for_dxf(room_polys, room_types, window_doors, window_doors
             canvas_size=canvas_size,
         )
 
+    # 当前阶段先只优化墙线，门窗 DXF 暂不导出。
+    processed["doors"] = []
+    processed["windows"] = []
+
     return processed
 
 
@@ -601,8 +617,7 @@ def export_floorplan_to_dxf(processed_floorplan, dxf_path):
     """
     将处理后的平面图导出为 DXF。
 
-    墙体使用“带厚度的线框轮廓”表示：
-    不是设置 CAD 线宽，而是直接输出墙体环带的外轮廓/内轮廓。
+    墙体按双线轮廓导出。
     """
     if ezdxf is None:
         raise ImportError("未安装 ezdxf，请先执行: pip install ezdxf")
